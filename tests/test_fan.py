@@ -305,8 +305,31 @@ class TestCommands:
 
     async def test_set_percentage_sends_speed(self):
         fan, data = _make_fan(speed_count=4)
+        fan._is_on = True
         await fan.async_set_percentage(75)
         data["send_command"].assert_called_once_with({"speed": 3})
+
+    async def test_set_percentage_when_off_turns_on(self):
+        fan, data = _make_fan(speed_count=5)
+        fan._is_on = False
+        await fan.async_set_percentage(20)
+        data["send_command"].assert_called_once_with({"speed": 1, "power": True})
+        assert fan.is_on is True
+
+    async def test_set_percentage_zero_turns_off(self):
+        fan, data = _make_fan(speed_count=4)
+        fan._is_on = True
+        await fan.async_set_percentage(0)
+        data["send_command"].assert_called_once_with({"power": False})
+        assert fan.is_on is False
+
+    async def test_set_percentage_in_auto_switches_to_normal(self):
+        fan, data = _make_fan(speed_count=4, preset_modes=["Normal", "Natural", "Sleep", "Auto"])
+        fan._is_on = True
+        fan._current_mode_idx = 3  # Auto
+        await fan.async_set_percentage(50)
+        data["send_command"].assert_called_once_with({"speed": 2, "mode": 0})
+        assert fan.preset_mode == "Normal"
 
     async def test_set_preset_mode_sends_mode(self):
         fan, data = _make_fan(preset_modes=["Normal", "Sleep"])

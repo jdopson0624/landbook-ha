@@ -172,7 +172,12 @@ class LandbookFan(FanEntity):
         self.async_write_ha_state()
 
     async def async_set_percentage(self, percentage: int) -> None:
-        if not self._speed_values or self._is_auto_mode():
+        # 0 % means off, as in FanEntity's default implementation, which this
+        # method overrides.
+        if percentage == 0:
+            await self.async_turn_off()
+            return
+        if not self._speed_values:
             return
         idx = max(
             0,
@@ -181,8 +186,20 @@ class LandbookFan(FanEntity):
                 math.ceil(percentage / 100 * len(self._speed_values)) - 1,
             ),
         )
+        props: dict = {self._speed_prop["code"]: self._speed_values[idx]}
+        # A speed command alone leaves an off fan off, so voice assistants'
+        # "set the fan to 20%" (which calls fan.set_percentage) did nothing.
+        if self._power_prop and not self._is_on:
+            props[self._power_prop["code"]] = True
+            self._is_on = True
+        # Auto ignores manual speeds, so an explicit speed switches to Normal
+        # instead of being dropped silently.
+        if self._is_auto_mode() and "Normal" in self._preset_modes:
+            normal = self._preset_modes.index("Normal")
+            props[self._mode_prop["code"]] = self._mode_values[normal]
+            self._current_mode_idx = normal
         self._current_speed_idx = idx
-        self._send({self._speed_prop["code"]: self._speed_values[idx]})
+        self._send(props)
         self.async_write_ha_state()
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
