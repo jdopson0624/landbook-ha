@@ -259,7 +259,52 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
             try:
                 await hass.async_add_executor_job(mqtt_client.connect)
-            except ConnectionError as exc:
+            except OSError as exc:  # ConnectionError, DNS (gaierror), socket errors
+                # A failed connect leaves the client with its own reconnect
+                # timer running (connect() calls paho disconnect(), whose
+                # on_disconnect schedules a reconnect). Without stopping it,
+                # every setup retry leaks a zombie client that keeps
+                # reconnecting and rotating the single-use refresh token until
+                # the account's session is burned.
+                mqtt_client.halt_reconnects()
+                await hass.async_add_executor_job(mqtt_client.disconnect)
+                # A dead token surfaces here only as a timeout --
+                # the broker answers CONNACK "Not authorized", and the TSL cache
+                # skips the REST call that would otherwise notice. Try one
+                # refresh; if the server rejects it, ask for reauth instead of
+                # retrying ConfigEntryNotReady forever (before, only
+                # delete/re-add recovered).
+                if refresh_tok and not domain_data.get(reauth_fired_key):
+                    try:
+                        bearer_token, refresh_tok = await async_refresh_token(
+                            bearer_token, refresh_tok, region
+                        )
+                    except LandbookAuthError as auth_exc:
+                        _LOGGER.warning(
+                            "Landbook: MQTT connect failed and token refresh rejected for %s (%s) — requesting reauth",
+                            uid,
+                            auth_exc,
+                        )
+                        domain_data[reauth_fired_key] = True
+                        entry.async_start_reauth(hass)
+                    except Exception as refresh_exc:  # noqa: BLE001 - network trouble: plain retry
+                        _LOGGER.warning(
+                            "Landbook: MQTT connect failed and token refresh errored for %s: %s",
+                            uid,
+                            refresh_exc,
+                        )
+                    else:
+                        account_tokens[uid] = {"access": bearer_token, "refresh": refresh_tok}
+                        for cfg_entry in hass.config_entries.async_entries(DOMAIN):
+                            if cfg_entry.data.get(CONF_UID) == uid:
+                                hass.config_entries.async_update_entry(
+                                    cfg_entry,
+                                    data={
+                                        **cfg_entry.data,
+                                        CONF_BEARER_TOKEN: bearer_token,
+                                        CONF_REFRESH_TOKEN: refresh_tok,
+                                    },
+                                )
                 raise ConfigEntryNotReady(f"MQTT connection failed: {exc}") from exc
 
             async def _proactive_token_refresh(_now: object = None) -> None:
