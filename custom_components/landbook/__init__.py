@@ -45,6 +45,7 @@ from .const import (
     DOMAIN,
     LOCAL_CONNECT_TIMEOUT,
     LOCAL_DISCOVERY_TIMEOUT,
+    LOCAL_KEEPALIVE_INTERVAL,
     LOCAL_RECONNECT_BACKOFF,
     LOCAL_RECONNECT_CACHED_TRIES,
     LOCAL_RECONNECT_CONFIRM_POLL,
@@ -847,6 +848,38 @@ def _wire_local_client(
         local_client.read(list(id_to_code.keys()))
     except Exception as exc:  # noqa: BLE001
         _LOGGER.debug("Landbook: initial local read for %s failed: %s", dk, exc)
+
+    hass.async_create_background_task(
+        _async_local_keepalive(hass, entry_id, local_client, generation, list(id_to_code)),
+        f"landbook local keepalive {dk}",
+    )
+
+
+async def _async_local_keepalive(
+    hass: HomeAssistant,
+    entry_id: str,
+    local_client: LandbookLocalClient,
+    generation: int,
+    ids: list[int],
+) -> None:
+    """Re-read properties every LOCAL_KEEPALIVE_INTERVAL while this client is
+    still the entry's current local connection (see LOCAL_KEEPALIVE_INTERVAL).
+    Exits once the client is superseded, dropped, or the entry unloads.
+    """
+    while True:
+        await asyncio.sleep(LOCAL_KEEPALIVE_INTERVAL)
+        entry_data = hass.data.get(DOMAIN, {}).get(entry_id)
+        if (
+            entry_data is None
+            or entry_data.get("local_client") is not local_client
+            or entry_data.get("local_generation") != generation
+        ):
+            return
+        try:
+            await hass.async_add_executor_job(local_client.read, ids)
+        except Exception as exc:  # noqa: BLE001 - a dead socket is on_disconnect's job
+            _LOGGER.debug("Landbook: local keepalive read failed: %s", exc)
+            return
 
 
 async def _confirm_local_data_plane(

@@ -48,6 +48,11 @@ LOCAL_RECONNECT_CACHED_TRIES = 3  # attempts on cached IP before fresh discovery
 # unconfirmed reconnect is treated as a failed attempt for backoff purposes.
 LOCAL_RECONNECT_CONFIRM_TIMEOUT = 5.0  # seconds to wait for a post-reconnect data push
 LOCAL_RECONNECT_CONFIRM_POLL = 0.1  # seconds between checks while waiting
+# The OmniBreeze fan only pushes properties on change, so an idle but healthy
+# local session goes quiet and trips landbook_api's 90s DATA_STALL_TIMEOUT.
+# A periodic read gets a burst of pushes back, keeping a live session's stall
+# clock fresh while a genuinely wedged one (no reply to reads) still dies.
+LOCAL_KEEPALIVE_INTERVAL = 45.0  # seconds between keepalive reads
 LOCAL_RECONNECT_MAX_STALL_DEMOTIONS = 3  # consecutive short-lived sessions before cloud demotion
 LOCAL_RECONNECT_HEALTHY_THRESHOLD = (
     120.0  # seconds a session must survive to reset the stall streak
